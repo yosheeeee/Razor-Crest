@@ -14,6 +14,7 @@
 #include "components/icons/library.h"
 #include "components/icons/recent.h"
 #include "components/icons/settings2.h"
+#include "components/icons/stats.h"
 #include "components/icons/transfer.h"
 #include "components/icons/wifi.h"
 #include "fontIds.h"
@@ -50,19 +51,23 @@ const uint8_t* menuIcon(UIIcon icon) {
       return HotspotIcon;
     case Bookmark:
       return BookmarkIcon;
+    case Stats:
+      return StatsIcon;
     default:
       return nullptr;
   }
 }
 
-void coloredIcon(const GfxRenderer& r, const uint8_t* image, int x, int y, bool black) {
-  if (!image) return;
-  constexpr int SIZE = 32;
-  constexpr int ROW_BYTES = SIZE / 8;
-  for (int row = 0; row < SIZE; ++row) {
-    for (int col = 0; col < SIZE; ++col) {
-      const uint8_t cell = image[row * ROW_BYTES + (col >> 3)];
-      if (!(cell & (0x80u >> (col & 7)))) r.drawPixel(x + SIZE - 1 - row, y + col, black);
+void coloredIcon(const GfxRenderer& r, const uint8_t* image, int x, int y, bool black, int size = 32) {
+  if (!image || size <= 0) return;
+  constexpr int SRC = 32;
+  constexpr int ROW_BYTES = SRC / 8;
+  for (int row = 0; row < size; ++row) {
+    for (int col = 0; col < size; ++col) {
+      const int srcRow = size == SRC ? row : row * SRC / size;
+      const int srcCol = size == SRC ? col : col * SRC / size;
+      const uint8_t cell = image[srcRow * ROW_BYTES + (srcCol >> 3)];
+      if (!(cell & (0x80u >> (srcCol & 7)))) r.drawPixel(x + size - 1 - row, y + col, black);
     }
   }
 }
@@ -76,7 +81,7 @@ std::string uppercase(std::string input) {
 
 bool ThemeScene::drawMenu(const GfxRenderer& renderer, const Rect area, int itemCount, int selected,
                           const std::function<std::string(int)>& label, const std::function<UIIcon(int)>& icon) const {
-  if (rowCut <= 0 || itemCount < 0 || area.width < 80 || area.height < 30) return false;
+  if ((rowCut <= 0 && menuRowRadius <= 0) || itemCount < 0 || area.width < 80 || area.height < 30) return false;
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int rowHeight = std::max(32, metrics.menuRowHeight);
   const int rowStep = rowHeight + metrics.menuSpacing;
@@ -86,20 +91,25 @@ bool ThemeScene::drawMenu(const GfxRenderer& renderer, const Rect area, int item
   const int width = area.width - 24;
   for (int i = pageStart; i < itemCount && i < pageStart + pageItems; ++i) {
     const int y = area.y + (i - pageStart) * rowStep;
+    const int rowH = rowHeight - 2;
     const bool active = i == selected;
-    if (menuDoubleOutline) {
+    if (menuRowRadius > 0) {
+      const Color fill = active ? Color::Black : (menuRowLight ? Color::LightGray : Color::White);
+      renderer.fillRoundedRect(x, y, width, rowH, menuRowRadius, fill);
+      if (!active && menuRowBorder > 0) renderer.drawRoundedRect(x, y, width, rowH, menuRowBorder, menuRowRadius, true);
+    } else if (menuDoubleOutline) {
       // Two bounded chamfer outlines give a Peanuts-inspired panel treatment
       // without altering the touch hitboxes or making regular rows look active.
       if (active) {
-        chamfer(renderer, x, y, width, rowHeight - 2, rowCut, true);
+        chamfer(renderer, x, y, width, rowH, rowCut, true);
       } else {
-        chamfer(renderer, x, y, width, rowHeight - 2, rowCut, true);
-        chamfer(renderer, x + 2, y + 2, width - 4, rowHeight - 6, rowCut - 2, false);
-        chamfer(renderer, x + 5, y + 5, width - 10, rowHeight - 12, rowCut - 5, true);
-        chamfer(renderer, x + 6, y + 6, width - 12, rowHeight - 14, rowCut - 6, false);
+        chamfer(renderer, x, y, width, rowH, rowCut, true);
+        chamfer(renderer, x + 2, y + 2, width - 4, rowH - 4, rowCut - 2, false);
+        chamfer(renderer, x + 5, y + 5, width - 10, rowH - 10, rowCut - 5, true);
+        chamfer(renderer, x + 6, y + 6, width - 12, rowH - 12, rowCut - 6, false);
       }
     } else if (active) {
-      chamfer(renderer, x, y, width, rowHeight - 2, rowCut, true);
+      chamfer(renderer, x, y, width, rowH, rowCut, true);
     } else if (rowSeparators && i + 1 != selected && i + 1 < itemCount) {
       renderer.drawLine(x + 12, y + rowHeight - 1, x + width - 1, y + rowHeight - 1, true);
     }
@@ -107,17 +117,32 @@ bool ThemeScene::drawMenu(const GfxRenderer& renderer, const Rect area, int item
     int tx = x + 14;
     const uint8_t* picture = icon ? menuIcon(icon(i)) : nullptr;
     if (picture) {
-      coloredIcon(renderer, picture, tx, y + (rowHeight - 34) / 2, !active);
-      tx += 46;
+      if (menuIconPlate > 0) {
+        const int plate = menuIconPlate;
+        const int plateRadius = menuIconPlateRadius > 0 ? menuIconPlateRadius : plate / 4;
+        const int plateY = y + (rowH - plate) / 2;
+        renderer.fillRoundedRect(tx, plateY, plate, plate, plateRadius, active ? Color::Black : Color::White);
+        if (!active && menuRowBorder > 0) renderer.drawRoundedRect(tx, plateY, plate, plate, 1, plateRadius, true);
+        const int iconSize = std::min(menuIconSize, plate - 8);
+        coloredIcon(renderer, picture, tx + (plate - iconSize) / 2, plateY + (plate - iconSize) / 2, !active, iconSize);
+        tx += plate + 10;
+      } else {
+        coloredIcon(renderer, picture, tx, y + (rowHeight - 34) / 2, !active);
+        tx += 46;
+      }
     }
-    const std::string text = menuDoubleOutline ? label(i) : uppercase(label(i));
-    const auto fitted = renderer.truncatedText(UI_12_FONT_ID, text.c_str(), std::max(1, x + width - tx - 42));
-    const int lineY = y + (rowHeight - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
-    renderer.drawText(UI_12_FONT_ID, tx, lineY, fitted.c_str(), !active);
-    const int cx = x + width - 18;
-    const int cy = y + (rowHeight - 2) / 2;
-    renderer.drawLine(cx - 4, cy - 6, cx + 2, cy, 2, !active);
-    renderer.drawLine(cx + 2, cy, cx - 4, cy + 6, 2, !active);
+    const bool upper = menuRowRadius > 0 ? menuTitleUppercase : !menuDoubleOutline;
+    const std::string text = upper ? uppercase(label(i)) : label(i);
+    const auto style = (menuRowRadius > 0 && menuTitleBold) ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+    const auto fitted = renderer.truncatedText(UI_12_FONT_ID, text.c_str(), std::max(1, x + width - tx - 42), style);
+    const int lineY = y + (rowH - renderer.getLineHeight(UI_12_FONT_ID)) / 2;
+    renderer.drawText(UI_12_FONT_ID, tx, lineY, fitted.c_str(), !active, style);
+    if (menuChevron) {
+      const int cx = x + width - 18;
+      const int cy = y + rowH / 2;
+      renderer.drawLine(cx - 4, cy - 6, cx + 2, cy, 2, !active);
+      renderer.drawLine(cx + 2, cy, cx - 4, cy + 6, 2, !active);
+    }
   }
   if (!menuFooterFile.empty() && pageStart == 0) {
     // Footer is decoration only. Restrict it to the unused lane above

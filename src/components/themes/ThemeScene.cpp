@@ -254,6 +254,17 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
   rowSeparators = false;
   settingsNavigationTabs = false;
   menuDoubleOutline = false;
+  menuRowRadius = 0;
+  menuRowBorder = 0;
+  menuRowLight = false;
+  menuIconPlate = 0;
+  menuIconPlateRadius = 0;
+  menuIconSize = 32;
+  menuTitleUppercase = true;
+  menuTitleBold = false;
+  menuChevron = true;
+  cardRadius = 0;
+  cardLight = false;
   backStyle = HeaderBackStyle::Emblem;
   menuFooterFile.clear();
   menuFooterTouchFile.clear();
@@ -277,7 +288,7 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
   JsonObjectConst styles = doc["styles"].as<JsonObjectConst>();
   // Metrics-only collections from Stage A have no styles object.
   if (!styles.isNull()) {
-    if (styles.size() > 18) return false;
+    if (styles.size() > 32) return false;
     const char* corners = styles["corners"] | "square";
     if (!strcmp(corners, "chamfer")) {
       if (!styles["chamfer_cut"].is<int>()) return false;
@@ -308,6 +319,33 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
     settingsNavigationTabs = strcmp(navigation, "tabs") == 0;
     if (!styles["menu_double_outline"].isNull() && !styles["menu_double_outline"].is<bool>()) return false;
     menuDoubleOutline = styles["menu_double_outline"] | false;
+    const auto readInt = [&](const char* key, int& out, const int min, const int max) -> bool {
+      if (styles[key].isNull()) return true;
+      if (!styles[key].is<int>()) return false;
+      out = styles[key].as<int>();
+      return out >= min && out <= max;
+    };
+    const auto readBool = [&](const char* key, bool& out) -> bool {
+      if (styles[key].isNull()) return true;
+      if (!styles[key].is<bool>()) return false;
+      out = styles[key].as<bool>();
+      return true;
+    };
+    const auto readFill = [&](const char* key, bool& light) -> bool {
+      if (styles[key].isNull()) return true;
+      const char* value = styles[key].as<const char*>();
+      if (!value || (strcmp(value, "light") && strcmp(value, "white"))) return false;
+      light = strcmp(value, "light") == 0;
+      return true;
+    };
+    if (!readInt("menu_row_radius", menuRowRadius, 0, 24) || !readInt("menu_row_border", menuRowBorder, 0, 2) ||
+        !readInt("menu_icon_plate", menuIconPlate, 0, 48) ||
+        !readInt("menu_icon_plate_radius", menuIconPlateRadius, 0, 24) ||
+        !readInt("menu_icon_size", menuIconSize, 16, 32) || !readInt("card_radius", cardRadius, 0, 24) ||
+        !readBool("menu_title_uppercase", menuTitleUppercase) || !readBool("menu_title_bold", menuTitleBold) ||
+        !readBool("menu_chevron", menuChevron) || !readFill("menu_row_fill", menuRowLight) ||
+        !readFill("card_fill", cardLight))
+      return false;
     if (!styles["book_carousel_rail_px"].isNull()) {
       if (!styles["book_carousel_rail_px"].is<int>()) return false;
       carouselRailWidth = styles["book_carousel_rail_px"].as<int>();
@@ -361,6 +399,7 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
   bool advertisedSleepGray = false;
   bool advertisedUsbScene = false;
   bool advertisedUsbGray = false;
+  bool advertisedSoftHome = false;
   JsonArrayConst themeEntries = manifest["themes"].as<JsonArrayConst>();
   if (themeEntries.isNull()) return false;
   for (JsonVariantConst entry : themeEntries) {
@@ -379,6 +418,7 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
       if (name && strcmp(name, "theme.sleep-grayscale.v1") == 0) advertisedSleepGray = true;
       if (name && strcmp(name, "theme.usb-scene.v1") == 0) advertisedUsbScene = true;
       if (name && strcmp(name, "theme.usb-grayscale.v1") == 0) advertisedUsbGray = true;
+      if (name && strcmp(name, "theme.soft-home.v1") == 0) advertisedSoftHome = true;
     }
     break;
   }
@@ -389,6 +429,10 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
     return false;
   if ((!styles.isNull() && !styles["header_back_style"].isNull()) != advertisedHeaderBack) return false;
   if ((menuDoubleOutline || !menuFooterFile.empty()) != advertisedMenuDecor) return false;
+  const bool usesSoftHome = menuRowRadius > 0 || menuRowBorder > 0 || menuIconPlate > 0 || menuIconPlateRadius > 0 ||
+                            menuIconSize != 32 || menuRowLight || !menuTitleUppercase || menuTitleBold ||
+                            !menuChevron || cardRadius > 0 || cardLight;
+  if (usesSoftHome != advertisedSoftHome) return false;
   // Larger-panel artwork is an optional variant of the same existing
   // capability, not a firmware-name requirement.
   const char* footerTouchRole = styles.isNull() ? nullptr : styles["menu_footer_touch_asset"].as<const char*>();
@@ -531,9 +575,13 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
       const char* anchor = json["anchor"] | "top-left";
       const char* const anchors[] = {"top-left", "top",         "top-right", "left",        "center",
                                      "right",    "bottom-left", "bottom",    "bottom-right"};
-      if (!allowed(anchor, anchors, 9) || (strcmp(color, "black") && strcmp(color, "white"))) return false;
+      const bool dither = !strcmp(color, "light") || !strcmp(color, "dither");
+      if (!allowed(anchor, anchors, 9) || (strcmp(color, "black") && strcmp(color, "white") && !dither) ||
+          (dither && strcmp(kind, "fill") && strcmp(kind, "rect")))
+        return false;
       Op op{};
-      op.black = strcmp(color, "white") != 0;
+      op.black = !dither && strcmp(color, "white") != 0;
+      op.dither = dither;
       op.anchorX = anchorPart(anchor, true);
       op.anchorY = anchorPart(anchor, false);
       if (!checkOffset(json["offset"], op.offsetX, op.offsetY)) return false;
@@ -585,9 +633,10 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
         if (literal == dynamic) return false;
         op.data = literal ? json["value"].as<const char*>() : "";
         op.source = dynamic ? json["source"].as<const char*>() : "";
-        const char* const sources[] = {"screen_title",     "date",    "device_name",    "book_title", "book_author",
-                                       "progress_percent", "tagline", "loading_percent"};
-        if (dynamic && !allowed(op.source.c_str(), sources, 8)) return false;
+        const char* const sources[] = {
+            "screen_title",     "date",    "device_name",     "book_title",      "book_author",
+            "progress_percent", "tagline", "loading_percent", "continue_reading"};
+        if (dynamic && !allowed(op.source.c_str(), sources, 9)) return false;
         if (op.data.size() > 128) return false;
         op.font = json["font"] | "ui_regular";
         if (json["max_width"].is<int>()) op.maxWidth = json["max_width"].as<int>();
@@ -613,11 +662,14 @@ bool ThemeScene::load(const std::string& themeJsonPath) {
       } else if (!strcmp(kind, "book-card") && regionIndex == 1) {
         op.kind = Kind::BookCard;
         const char* variant = json["variant"] | "outlined";
-        if (strcmp(variant, "outlined") && strcmp(variant, "filled") && strcmp(variant, "cover")) return false;
+        if (strcmp(variant, "outlined") && strcmp(variant, "filled") && strcmp(variant, "cover") &&
+            strcmp(variant, "soft"))
+          return false;
         if (!strcmp(variant, "cover")) op.data = "@native-cover";
+        if (!strcmp(variant, "soft")) op.data = "@native-soft";
         const char* badge = json["badge_asset"] | "";
         if (*badge) {
-          if (op.data == "@native-cover") return false;
+          if (op.data == "@native-cover" || op.data == "@native-soft") return false;
           JsonVariantConst asset = assets[badge];
           if (!asset.is<const char*>() || !safeResource(asset.as<const char*>(), id)) return false;
           op.data = base + "/" + asset.as<const char*>();
@@ -662,7 +714,7 @@ bool ThemeScene::headerBackgroundBlack() const {
 }
 bool ThemeScene::hasNativeCoverCard() const {
   for (const auto& op : regions[static_cast<size_t>(Region::Home)])
-    if (op.kind == Kind::BookCard && op.data == "@native-cover") return true;
+    if (op.kind == Kind::BookCard && (op.data == "@native-cover" || op.data == "@native-soft")) return true;
   return false;
 }
 
@@ -687,13 +739,19 @@ bool ThemeScene::draw(const GfxRenderer& renderer, Region region, Rect area, con
     if (phase == Phase::Background && op.kind == Kind::BookCard) continue;
     if (phase == Phase::Foreground && op.kind != Kind::BookCard) continue;
     if (op.kind == Kind::Fill) {
-      renderer.fillRect(area.x, area.y, area.width, area.height, op.black);
+      if (op.dither)
+        renderer.fillRectDither(area.x, area.y, area.width, area.height, Color::LightGray);
+      else
+        renderer.fillRect(area.x, area.y, area.width, area.height, op.black);
     } else if (op.kind == Kind::Rect) {
       const int width = op.maxWidth == 0 ? area.width : op.maxWidth;
       const int height = op.maxHeight == 0 ? area.height : op.maxHeight;
       const int x = anchored(area.x, area.width, width, op.anchorX, op.offsetX);
       const int y = anchored(area.y, area.height, height, op.anchorY, op.offsetY);
-      renderer.fillRect(x, y, width, height, op.black);
+      if (op.dither)
+        renderer.fillRectDither(x, y, width, height, Color::LightGray);
+      else
+        renderer.fillRect(x, y, width, height, op.black);
     } else if (op.kind == Kind::Bitmap) {
       if (touchBack && backStyle == HeaderBackStyle::Arrow && op.headerEmblem) continue;
       // A touch footer may fill the taller confirmed safe band even when the
@@ -772,6 +830,8 @@ bool ThemeScene::draw(const GfxRenderer& renderer, Region region, Rect area, con
         text = temporal;
       } else if (op.source == "tagline")
         text = "";
+      else if (op.source == "continue_reading")
+        text = tr(STR_CONTINUE_READING);
       else if (!op.source.empty())
         text = "0%";
       int font = op.font == "display" && renderer.getFontMap().count(ThemeFonts::DISPLAY_ID) ? ThemeFonts::DISPLAY_ID
@@ -925,6 +985,84 @@ bool ThemeScene::draw(const GfxRenderer& renderer, Region region, Rect area, con
             renderer.drawText(SMALL_FONT_ID, textX + barWidth + 9, barY - 6, percent, !selected);
           }
         }
+        continue;
+      }
+      if (op.data == "@native-soft") {
+        const RecentBook* first = hasBook ? &(*recentBooks)[0] : nullptr;
+        const int cardX = area.x + 12;
+        const int cardW = std::max(1, area.width - 24);
+        const int cardH = std::max(1, area.height);
+        const int radius = cardRadius > 0 ? cardRadius : 16;
+        renderer.fillRoundedRect(cardX, area.y, cardW, cardH, radius, cardLight ? Color::LightGray : Color::White);
+        renderer.drawRoundedRect(cardX, area.y, cardW, cardH, selected ? 2 : 1, radius, true);
+
+        const int coverW = std::min(80, std::max(40, cardW / 4));
+        const int coverH = std::min(112, std::max(40, cardH - 24));
+        const int coverX = cardX + 12;
+        const int coverY = area.y + 12;
+        renderer.fillRect(coverX, coverY, coverW, coverH, false);
+        bool coverDrawn = false;
+        if (first && !first->coverBmpPath.empty()) {
+          const std::string thumb =
+              UITheme::getCoverThumbPath(first->coverBmpPath, UITheme::getInstance().getMetrics().homeCoverHeight);
+          const std::string candidates[2] = {thumb, first->coverBmpPath};
+          for (const auto& candidate : candidates) {
+            if (coverDrawn || candidate.empty()) break;
+            HalFile file;
+            if (!Storage.openFileForRead("HOME", candidate, file)) continue;
+            Bitmap bitmap(file);
+            if (bitmap.parseHeaders() == BmpReaderError::Ok)
+              coverDrawn = BaseTheme::drawCoverThumbFill(renderer, bitmap, Rect{coverX, coverY, coverW, coverH});
+            file.close();
+          }
+        }
+        if (!coverDrawn) paintIcon(renderer, BookIcon, coverX + (coverW - 32) / 2, coverY + (coverH - 32) / 2, true);
+        renderer.maskRoundedRectOutsideCorners(coverX, coverY, coverW, coverH, 6,
+                                               cardLight ? Color::LightGray : Color::White);
+        renderer.drawRoundedRect(coverX, coverY, coverW, coverH, 1, 6, true);
+
+        const int textX = coverX + coverW + 12;
+        const int textW = std::max(1, cardX + cardW - 12 - textX);
+        const int titleFont =
+            renderer.getFontMap().count(ThemeFonts::DISPLAY_ID) > 0 ? ThemeFonts::DISPLAY_ID : UI_12_FONT_ID;
+        const char* title =
+            first ? (first->title.empty() ? first->path.c_str() : first->title.c_str()) : tr(STR_NO_OPEN_BOOK);
+        const auto titleText = renderer.truncatedText(titleFont, title, textW, EpdFontFamily::BOLD);
+        renderer.drawText(titleFont, textX, area.y + 12, titleText.c_str(), true, EpdFontFamily::BOLD);
+        if (first) {
+          const auto author = renderer.truncatedText(UI_10_FONT_ID, first->author.c_str(), textW);
+          renderer.drawText(UI_10_FONT_ID, textX, area.y + 12 + renderer.getLineHeight(titleFont) + 2, author.c_str(),
+                            true);
+          static std::string cachedBook;
+          static uint32_t lastRead = 0;
+          static int cachedPercent = -1;
+          const uint32_t now = millis();
+          if (first->path != cachedBook || now - lastRead > 10000u) {
+            cachedBook = first->path;
+            cachedPercent = loadBookProgress(first->path);
+            lastRead = now;
+          }
+          if (cachedPercent >= 0 && cachedPercent <= 100) {
+            char percent[8];
+            snprintf(percent, sizeof(percent), "%d%%", cachedPercent);
+            const int barY = area.y + cardH - 58;
+            const int barW = std::max(20, textW - 48);
+            renderer.fillRoundedRect(textX, barY, barW, 8, 4, Color::LightGray);
+            if (cachedPercent > 0)
+              renderer.fillRoundedRect(textX, barY, std::max(4, barW * cachedPercent / 100), 8, 4, Color::Black);
+            renderer.drawText(SMALL_FONT_ID, textX + barW + 6, barY - 6, percent, true);
+          }
+        }
+        constexpr int ctaH = 36;
+        const int ctaY = area.y + cardH - ctaH - 10;
+        renderer.fillRoundedRect(cardX + 12, ctaY, cardW - 24, ctaH, 8, Color::Black);
+        std::string ctaText = upperAscii(tr(STR_CONTINUE_READING));
+        ctaText += "  >";
+        const auto ctaFitted = renderer.truncatedText(UI_10_FONT_ID, ctaText.c_str(), cardW - 40, EpdFontFamily::BOLD);
+        const int ctaW = renderer.getTextWidth(UI_10_FONT_ID, ctaFitted.c_str(), EpdFontFamily::BOLD);
+        renderer.drawText(UI_10_FONT_ID, cardX + (cardW - ctaW) / 2,
+                          ctaY + (ctaH - renderer.getLineHeight(UI_10_FONT_ID)) / 2, ctaFitted.c_str(), false,
+                          EpdFontFamily::BOLD);
         continue;
       }
       drawChamfer(renderer, x, y, width, height, cut, true, true);

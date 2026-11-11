@@ -59,7 +59,7 @@ void HomeMenuRegistry::load(const int capacity, const bool pluginsEnabled, const
       if (!StatsDashboardActivity::supportsManifest(device) && !VocabularyHighlightsActivity::supportsManifest(device))
         continue;
       const char* icon = shortcut["icon"].as<const char*>();
-      const UIIcon artwork = icon && strcmp(icon, "stats") == 0     ? Blocks
+      const UIIcon artwork = icon && strcmp(icon, "stats") == 0     ? Stats
                              : icon && strcmp(icon, "library") == 0 ? Library
                              : icon && strcmp(icon, "folder") == 0  ? Folder
                                                                     : Book;

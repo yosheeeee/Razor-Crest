@@ -44,6 +44,7 @@ class ThemeScene {
   struct Op {
     Kind kind;
     bool black = true;
+    bool dither = false;
     int anchorX = 0, anchorY = 0;
     int offsetX = 0, offsetY = 0;
     int maxWidth = 0, maxHeight = 0;
@@ -74,6 +75,17 @@ class ThemeScene {
   bool rowSeparators = false;
   bool settingsNavigationTabs = false;
   bool menuDoubleOutline = false;
+  int menuRowRadius = 0;
+  int menuRowBorder = 0;
+  bool menuRowLight = false;
+  int menuIconPlate = 0;
+  int menuIconPlateRadius = 0;
+  int menuIconSize = 32;
+  bool menuTitleUppercase = true;
+  bool menuTitleBold = false;
+  bool menuChevron = true;
+  int cardRadius = 0;
+  bool cardLight = false;
   HeaderBackStyle backStyle = HeaderBackStyle::Emblem;
   std::string menuFooterFile;
   std::string menuFooterTouchFile;
